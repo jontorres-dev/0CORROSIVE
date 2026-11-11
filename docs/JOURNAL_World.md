@@ -126,9 +126,9 @@ Tick application kernel tests: OK
 ### Custo por verbo (minutos)
 | Verbo | Custo |
 |---|---|
-| fala, sair, mudar_aposento | 10 |
-| toque | 15 |
-| item, explorar | 20 |
+| fala, sair, mudar_aposento (TALK, STOP, MOVE) | 25 |
+| toque (TOUCH) | 60 |
+| item, explorar (ITEM, SEARCH) | 45 |
 
 ### Saída de cena
 - Piso de 40 min + 15 × n incrementos. A definição de "incremento" ainda está pendente.
@@ -142,7 +142,7 @@ Tick application kernel tests: OK
 | Madrugada | 00:00–05:59 |
 
 - **Elipse:** salta para o início do próximo bloco.
-- Ritmo da campanha: 3–4 blocos por dia, 8–15 turnos por dia, começando no meio da ação.
+- Ritmo da campanha: 3–4 blocos por dia, 8–15 turnos por bloco (até ~60 por dia), começando no meio da ação.
 
 ### Responsabilidades
 - O GameMaster emite o Tick; só o World aplica.
@@ -198,3 +198,30 @@ Tempo:
 - Stop: sai do estado atual
 
 Reorganização flow world
+
+---
+
+## 2026-11-11
+
+- Repo: projeto no 0CORROSIVE (https://github.com/jontorres-dev/0CORROSIVE). Git roda sempre de dentro de `alpha001`.
+- Limpeza: apagadas as pastas antigas do Ordo Aurea (`game`, `ordo`, `ordo-aurea-meretrix`); backup com o usuário.
+- JSON: removidos `read_world_json`, `load_world_json`, o kernel JSON e o `sample_world.json`. Pasta `data/` fica vazia.
+- Tempo: limite provisório de 10 dias, ainda sem regra no código. Clock e GameClock ficam como estão.
+- Porta trancada: `door.py` (novo), modelo `Door` e regra `try_move`, que devolve a porta ou levanta `ActionDenied`.
+- `deny.py`: entrou `WhyDeny.LOCKED`; kernel agora conta 3.
+- `test_imports.py`: passou a importar o `door`.
+- Kernels OK: Clock, Tick, Clock state, Text, Verb, Deny, Door e Imports.
+- Próximo: mecânicas do GameMaster.
+- Custos revistos para 25/60/45 min (TOUCH 1h): 8–15 turnos por bloco de 360 min, até ~60 por dia.
+- `DayPhase` renomeado para MORNING, AFTERNOON, EVENING e NIGHT, batendo com os blocos.
+
+---
+
+## 2026-11-11 — GameMaster
+
+- `GameMaster.py` (novo): `VERB_COST` (TALK/MOVE/STOP 25, TOUCH 60, ITEM/SEARCH 45), `emit_tick` (verbo + action_id → Tick) e `read_phase` (hora → bloco do dia).
+- Elipse: `BLOCK_STARTS` (0, 6, 12, 18), `minutes_to_next_block` (minutos até o próximo início, nunca 0) e `emit_ellipse` (Tick com `reason="ellipse"`, passa pelo mesmo `apply_tick`).
+- Testes: custo de cada verbo, bordas de fase, Tick de ponta a ponta no World (APPLIED e DUPLICATE) e elipse (11:30 → 12:00, 23:10 → dia 2 00:00).
+- `test_imports.py`: passou a importar o `GameMaster`.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, GameMaster e Imports.
+- Próximo: GameMode.

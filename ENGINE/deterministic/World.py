@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from enum import Enum
-from pathlib import Path
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -123,10 +121,10 @@ def make_game_clock(
 
 
 class DayPhase(str, Enum):
-    DAWN = "dawn"
-    DAY = "day"
-    DUSK = "dusk"
-    NIGHT = "night"
+    MORNING = "morning"      # 06:00-11:59
+    AFTERNOON = "afternoon"  # 12:00-17:59
+    EVENING = "evening"      # 18:00-23:59
+    NIGHT = "night"          # 00:00-05:59
 
 
 def read_clock_state(clock: GameClock) -> tuple[int, int, int]:
@@ -144,17 +142,6 @@ def advance_clock(clock: GameClock, minutes: int) -> GameClock:
         minute=now.minute,
         tick_unit=clock.tick_unit,
     )
-
-
-# JSON: read a world file; the "clock" key boots the World
-def read_world_json(path: str | Path) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_world_json(path: str | Path) -> World:
-    data = read_world_json(path)
-    return compose_world(make_game_clock(**data["clock"]))
 
 
 # teste
@@ -238,16 +225,6 @@ def run_clock_state_kernel_tests() -> None:
         raise AssertionError(f"expected ValueError: {(day, hour, minute)}")
 
 
-def run_json_kernel_tests() -> None:
-    path = Path(__file__).resolve().parents[2] / "data" / "sample_world.json"
-    data = read_world_json(path)
-    assert data["location"] == "library"
-    assert data["player"]["inventory"] == ["candle", "old key"]
-    world = load_world_json(path)
-    assert read_clock_state(world.clock) == (2, 21, 30)
-    assert world.applied_ticks == ()
-
-
 if __name__ == "__main__":
     run_clock_kernel_tests()
     print("Clock kernel tests: OK")
@@ -255,5 +232,3 @@ if __name__ == "__main__":
     print("Tick application kernel tests: OK")
     run_clock_state_kernel_tests()
     print("Clock state kernel tests: OK")
-    run_json_kernel_tests()
-    print("JSON kernel tests: OK")

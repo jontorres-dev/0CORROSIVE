@@ -8,8 +8,7 @@ class Verb(str, Enum):
     MOVE = "move"
     # WAIT = "wait"  # not used for now
     STOP = "stop"
-    # 8: reserved slot for an eighth verb, not used for now
-    
+
     # 2. free text actions    
 TXT_VERBS = {Verb.TOUCH, Verb.TALK, Verb.SEARCH}
 
