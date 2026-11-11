@@ -1,17 +1,17 @@
 from enum import Enum
 
-
+## 1.Reason
 class WhyDeny(str, Enum):
     TARGET_NOT_FOUND = "target_not_found"
     NO_CONSENT = "no_consent"
+    LOCKED = "locked"
 
-
+# 2. ActionDenied
 class ActionDenied(ValueError):
     def __init__(self, reason: WhyDeny) -> None:
         self.reason = reason
         super().__init__(reason.value)
-
-
+# 3. Tests
 def run_errors_kernel_tests() -> None:
     # 1. reason travels inside the error
     try:
@@ -23,7 +23,7 @@ def run_errors_kernel_tests() -> None:
     assert issubclass(ActionDenied, ValueError)
 
     # 3. exact size
-    assert len(WhyDeny) == 2
+    assert len(WhyDeny) == 3
 
     print(" -Deny- errors kernel: =OK=")
 

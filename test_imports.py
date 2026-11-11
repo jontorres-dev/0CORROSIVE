@@ -8,6 +8,7 @@ MODULES = (
     "alpha001.ENGINE.deterministic.deny",
     "alpha001.ENGINE.deterministic.text",
     "alpha001.ENGINE.deterministic.verbs",
+    "alpha001.ENGINE.deterministic.door",
 )
 
 
