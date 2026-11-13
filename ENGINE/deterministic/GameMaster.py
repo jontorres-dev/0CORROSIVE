@@ -1,12 +1,15 @@
 from __future__ import annotations
+from pathlib import Path 
 from typing import Final
 from enum import Enum
-
+from pydantic import BaseModel, ConfigDict
+import tempfile
 
 from .verbs import Verb
-from .World import DayPhase, GameClock, Tick, TickStatus,compose_world, make_game_clock
-
+from .World import DayPhase, GameClock, World, Tick, TickApplication, TickStatus, compose_world, make_game_clock
 from .warn import PlayerWarning, WhyWarn
+from .persistence import SaveSlot, SaveError, WhySaveFail, new_game, load_game, record_tick
+
 
 # 1. Verb Cost | Block Starts | GameMode
 VERB_COST: Final[dict[Verb, int]] = {
@@ -60,10 +63,29 @@ def check_phase(before: GameClock, after: GameClock) -> tuple[PlayerWarning, ...
         return (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
     return ()
 
+## 6. TurnResult: 
+class TurnResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    
+    status: TickStatus
+    world: World
+    warnings: tuple[PlayerWarning, ...]
+
+## 7. run_turn(slot, world, verb, action_id, data_dir) -> TurnResult
+def run_turn(slot: SaveSlot, world: World, verb: Verb, action_id: str, data_dir: Path) -> TurnResult:
+    tick = emit_tick(verb, action_id)
+    application = world.apply_tick(tick)
+    if application.status is not TickStatus.APPLIED:
+        return TurnResult(status=application.status, world=world, warnings=())
+    record_tick(slot, tick, application, data_dir)
+    warnings = check_phase(world.clock, application.world.clock)
+    return TurnResult(status=application.status, world=application.world, warnings=warnings)
+    
+        
 
 
 
-# 6. Tests
+# 8. Tests
 def run_game_master_kernel_tests() -> None:
     # every verb has a cost
     for verb in Verb:
@@ -112,6 +134,31 @@ def run_game_master_kernel_tests() -> None:
     calm = make_game_clock(1, 10, 0)
     talked = compose_world(calm, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TALK, "w2")).world.clock
     assert check_phase(calm, talked) == ()
+
+    # run_turn: verb -> World -> autosave -> warnings
+    with tempfile.TemporaryDirectory() as temp:
+        data_dir = Path(temp)
+        slot = SaveSlot(player_id="jon", playthrough_id="run")
+        start = compose_world(make_game_clock(1, 11, 30), rooms=("start",), doors=(), player_room="start")
+        new_game(slot, start, data_dir)
+        played = run_turn(slot, start, Verb.TOUCH, "r1", data_dir)
+        assert played.status is TickStatus.APPLIED
+        assert (played.world.clock.hour, played.world.clock.minute) == (12, 30)
+        assert played.warnings == (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+        assert load_game(slot, data_dir) == played.world
+        again = run_turn(slot, played.world, Verb.TOUCH, "r1", data_dir)
+        assert again.status is TickStatus.DUPLICATE
+        assert again.world == played.world and again.warnings == ()
+        clash = run_turn(slot, played.world, Verb.TALK, "r1", data_dir)
+        assert clash.status is TickStatus.CONFLICT
+        assert clash.world == played.world and clash.warnings == ()
+        assert load_game(slot, data_dir) == played.world        
+        ghost = SaveSlot(player_id="ghost", playthrough_id="run")
+        try:
+            run_turn(ghost, start, Verb.TALK, "g1", data_dir)
+            raise AssertionError("expected slot_not_found")
+        except SaveError as error:
+            assert error.reason is WhySaveFail.SLOT_NOT_FOUND
 
     print("GameMaster kernel OK")
 

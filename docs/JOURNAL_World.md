@@ -258,3 +258,20 @@ Reorganização flow world
 - `NarrationContext` ganhou o campo `glance`, montado no `build_context` a partir do World depois do tick.
 - `test_imports.py`: passou a importar o `glance`.
 - Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context, Text, Glance e Imports.
+
+---
+
+## 2026-11-13 — Persistência e pipeline do turno
+
+- `persistence.py` (novo): save só automático, sem comando de salvar. `SaveSlot` (`player_id`, `playthrough_id`, só letras, números e `-`) e `Snapshot` (`world_id` sha256 + `World`). Arquivos `data/<player>_<playthrough>_snapshot.json` e `_log.jsonl`, sempre em UTF-8.
+- Erros próprios: `WhySaveFail` (`SLOT_EXISTS`, `SLOT_NOT_FOUND`, `WORLD_MISMATCH`) e `SaveError`. O WhyDeny não ganhou motivos novos.
+- `new_game`, `load_game` (snapshot + replay do log; CONFLICT vira `WORLD_MISMATCH`, DUPLICATE passa), `record_tick` (autosave a cada turno, `snapshot_every=1`; confere se o mundo saiu do save) e `list_saves`.
+- Roguelike: `RunEnd` (`DEATH`, `GAME_OVER`, `ENDING`). O `end_game` apaga o save e a próxima run começa do zero; o `playthrough_id` pode ser reusado.
+- Revisão a fundo: path traversal, snapshot gravado por `.tmp` + troca atômica, arquivo corrompido, log órfão, mundo de outro save e arquivo estranho na pasta.
+- `GameMaster.py`: `TurnResult` (`status`, `world`, `warnings`) e `run_turn` (verbo → `emit_tick` → `apply_tick` → `record_tick` → `check_phase`). Turno que não vale não salva nem avisa.
+- Testes: 16 casos no persistence; no GameMaster, o turno APPLIED salvo, DUPLICATE, CONFLICT e `SLOT_NOT_FOUND`.
+- `test_imports.py`: passou a importar o `persistence`.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context, Text, Glance, Persistence e Imports.
+- Próximo: MOVE (trocar de sala) e STOP sem tick.
+
+
