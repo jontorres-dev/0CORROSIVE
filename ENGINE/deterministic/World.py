@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from .door import Door 
+
 
 # # Time Clock # # 
 
@@ -79,6 +81,9 @@ class World(BaseModel):
 
     clock: GameClock
     applied_ticks: tuple[Tick, ...] = ()
+    rooms: tuple[str, ...]
+    doors: tuple[Door, ...]
+    player_room: str = Field(..., min_length=1)    
 
     def read_clock(self) -> GameClock:
         return self.clock
@@ -93,6 +98,9 @@ class World(BaseModel):
         advanced = World(
             clock=advance_clock(self.clock, tick.amount),
             applied_ticks=(*self.applied_ticks, tick),
+            rooms=self.rooms,
+            doors=self.doors,
+            player_room=self.player_room
         )
         return TickApplication(status=TickStatus.APPLIED, world=advanced)
 
@@ -105,8 +113,13 @@ class TickApplication(BaseModel):
     world: World
 
 
-def compose_world(clock: GameClock) -> World:
-    return World(clock=clock)
+def compose_world(
+    clock: GameClock,
+    rooms: tuple[str, ...],
+    doors: tuple[Door, ...],
+    player_room: str,
+) -> World:
+    return World(clock=clock, rooms=rooms, doors=doors, player_room=player_room)
 
 
 # boot game clock
@@ -143,10 +156,9 @@ def advance_clock(clock: GameClock, minutes: int) -> GameClock:
         tick_unit=clock.tick_unit,
     )
 
-
 # teste
 def run_tick_kernel_tests() -> None:
-    world = compose_world(make_game_clock(3, 14, 0))
+    world = compose_world(make_game_clock(3, 14, 0), rooms=("start",), doors=(), player_room="start")
     first = Tick(amount=15, reason="touch", source_action_id="a1")
 
     applied = world.apply_tick(first)
@@ -180,7 +192,7 @@ def run_tick_kernel_tests() -> None:
     assert read_clock_state(both.world.clock) == (3, 14, 35)
     assert both.world.applied_ticks == (first, second)
 
-    late = compose_world(make_game_clock(3, 23, 50))
+    late = compose_world(make_game_clock(3, 23, 50), rooms=("start",), doors=(), player_room="start")
     rolled = late.apply_tick(Tick(amount=20, reason="item", source_action_id="a3"))
     assert rolled.status is TickStatus.APPLIED
     assert read_clock_state(rolled.world.clock) == (4, 0, 10)

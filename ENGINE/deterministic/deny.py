@@ -3,7 +3,7 @@ from enum import Enum
 ## 1.Reason
 class WhyDeny(str, Enum):
     TARGET_NOT_FOUND = "target_not_found"
-    NO_CONSENT = "no_consent"
+    NO_CONSENT = "no_consent"   
     LOCKED = "locked"
 
 # 2. ActionDenied

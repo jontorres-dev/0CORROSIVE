@@ -10,6 +10,11 @@ MODULES = (
     "alpha001.ENGINE.deterministic.verbs",
     "alpha001.ENGINE.deterministic.door",
     "alpha001.ENGINE.deterministic.GameMaster",
+    "alpha001.ENGINE.deterministic.warn",
+    "alpha001.ENGINE.deterministic.context",   
+    "alpha001.ENGINE.deterministic.glance",
+    "alpha001.ENGINE.deterministic.persistence",
+
 )
 
 

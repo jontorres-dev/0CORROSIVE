@@ -1,11 +1,14 @@
 from __future__ import annotations
 from typing import Final
+from enum import Enum
+
 
 from .verbs import Verb
 from .World import DayPhase, GameClock, Tick, TickStatus,compose_world, make_game_clock
 
+from .warn import PlayerWarning, WhyWarn
 
-# 1. Verb Cost | Block Stars
+# 1. Verb Cost | Block Starts | GameMode
 VERB_COST: Final[dict[Verb, int]] = {
     Verb.TALK: 25,
     Verb.MOVE: 25,
@@ -14,12 +17,13 @@ VERB_COST: Final[dict[Verb, int]] = {
     Verb.ITEM: 45,
     Verb.SEARCH: 45,
 }
-
+  ##  1.1.          
 BLOCK_STARTS: Final[tuple[int, ...]] = (0, 6, 12, 18)
-
-
-
-# 2. emit_tick | verb + action_id | send Tick ->> World.py
+    # GameMode: current game mode. Owner :::: GameMaster.py
+class GameMode(str, Enum):
+    EXPLORE = "explore"                   
+    
+# 2. emit_tick | verb + action_id | send Tick ->  World.py
 def emit_tick(verb: Verb, action_id: str) -> Tick:
     return Tick(amount=VERB_COST[verb], reason=verb.value, source_action_id=action_id)
 
@@ -33,6 +37,11 @@ def read_phase(clock: GameClock) -> DayPhase:
         return DayPhase.EVENING
     return DayPhase.NIGHT
 
+## 3.1 read_mode: returns current GameMode. Single Owner :::: GameMaster.py 
+def read_mode() -> GameMode:
+    return GameMode.EXPLORE
+
+
 ## 4.  minutes  next block
 def minutes_to_next_block(clock: GameClock) -> int:
     now = clock.hour * 60 + clock.minute
@@ -44,6 +53,14 @@ def minutes_to_next_block(clock: GameClock) -> int:
 ## 5. emit ellipse
 def emit_ellipse(clock: GameClock, action_id: str) -> Tick:
     return Tick(amount=minutes_to_next_block(clock), reason="ellipse", source_action_id=action_id)
+
+## 5.1 check_phase: clock before + after -> warnings (never raises)
+def check_phase(before: GameClock, after: GameClock) -> tuple[PlayerWarning, ...]:
+    if read_phase(before) != read_phase(after):
+        return (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+    return ()
+
+
 
 
 # 6. Tests
@@ -63,7 +80,7 @@ def run_game_master_kernel_tests() -> None:
         assert read_phase(make_game_clock(1, hour, 0)) == phase, f"phase at {hour}h"
 
     # end to end: GameMaster -> World
-    world = compose_world(make_game_clock(1, 11, 30))
+    world = compose_world(make_game_clock(1, 11, 30), rooms=("start",), doors=(), player_room="start")
     first = world.apply_tick(emit_tick(Verb.TOUCH, "a2"))
     assert first.status == TickStatus.APPLIED
     assert (first.world.clock.hour, first.world.clock.minute) == (12, 30)
@@ -77,15 +94,24 @@ def run_game_master_kernel_tests() -> None:
         assert got == expected, f"ellipse at {hour}:{minute:02d} -> {got}"
 
     # ellipse end to end = start of block  
-    jump = compose_world(make_game_clock(1, 11, 30)).apply_tick(
+    jump = compose_world(make_game_clock(1, 11, 30),  rooms=("start",), doors=(), player_room="start").apply_tick(
         emit_ellipse(make_game_clock(1, 11, 30), "e1"))
     assert jump.status == TickStatus.APPLIED
     assert (jump.world.clock.hour, jump.world.clock.minute) == (12, 0)
     assert read_phase(jump.world.clock) == DayPhase.AFTERNOON
     # 23:10 -> next day 00:00
-    night = compose_world(make_game_clock(1, 23, 10)).apply_tick(
-        emit_ellipse(make_game_clock(1, 23, 10), "e2"))
+    night = compose_world(make_game_clock(1, 23, 10), rooms=("start",), doors=(), player_room="start").apply_tick(emit_ellipse(make_game_clock(1, 23, 10), "e2"))
     assert (night.world.clock.day, night.world.clock.hour) == (2, 0)
+    assert len(GameMode) == 1
+    assert read_mode() is GameMode.EXPLORE
+    assert read_mode().value == "explore"
+    # warnings: phase change
+    start = make_game_clock(1, 11, 30)
+    moved = compose_world(start, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TOUCH, "w1")).world.clock
+    assert check_phase(start, moved) == (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+    calm = make_game_clock(1, 10, 0)
+    talked = compose_world(calm, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TALK, "w2")).world.clock
+    assert check_phase(calm, talked) == ()
 
     print("GameMaster kernel OK")
 

@@ -2,13 +2,13 @@ import unicodedata
 
 def normalize_input(text: str) -> str:
     if not isinstance(text, str):
-        raise TypeError("normalize_input espera str")
+        raise TypeError("normalize_input expects str")
     text = text.strip()
     text = text.casefold()  
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     if not text:
-        raise ValueError("normalize_input: entrada vazia")
+        raise ValueError("normalize_input: empty input")
     return text
 
 def run_kernel_tests() -> None:
@@ -22,7 +22,7 @@ def run_kernel_tests() -> None:
         except TypeError:
             pass
         else:
-            raise AssertionError(f"aceitou tipo errado: {bad!r}")
+            raise AssertionError(f"accepted wrong type: {bad!r}")
 
     for empty in ("", "  "):
         try:
@@ -30,7 +30,7 @@ def run_kernel_tests() -> None:
         except ValueError:
             pass
         else:
-            raise AssertionError(f"aceitou vazio: {empty!r}")
+            raise AssertionError(f"accepted empty: {empty!r}")
 
 if __name__ == "__main__":
     run_kernel_tests()

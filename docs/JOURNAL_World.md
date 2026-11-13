@@ -225,3 +225,36 @@ Reorganização flow world
 - `test_imports.py`: passou a importar o `GameMaster`.
 - Kernels OK: Tick, Clock state, Verb, Deny, Door, GameMaster e Imports.
 - Próximo: GameMode.
+
+---
+
+## 2026-11-12 — GameMode e avisos
+
+- `GameMode(str, Enum)` no `GameMaster.py`, só com `EXPLORE`; dono único é o GameMaster. `read_mode()` devolve o modo atual. DIALOGUE descartado: sem uso por agora.
+- `warn.py` (novo): `WhyWarn` (`PHASE_CHANGED`) e `PlayerWarning` (frozen, strict, `reason: WhyWarn`). Aviso não bloqueia; quem escreve a frase é a LLM.
+- `check_phase(before, after)` no `GameMaster.py`: devolve `PHASE_CHANGED` quando o Tick vira o bloco, senão tupla vazia; nunca levanta erro.
+- `test_imports.py`: passou a importar o `warn`.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster e Imports.
+- Próximo: pacote de contexto da LLM.
+
+---
+
+## 2026-11-13 — Pacote de contexto da LLM
+
+- `context.py` (novo): `NarrationContext` (frozen, strict, forbid) com `clock`, `phase`, `mode`, `status` e `warnings`. É a única coisa que a LLM recebe pra narrar; ela não lê o World direto.
+- `build_context(before, after, application)`: monta o pacote com `read_phase`, `read_mode`, `application.status` e `check_phase`. Não decide nada novo, só junta.
+- Testes: 11:30 + TOUCH → 12:30 AFTERNOON, EXPLORE, APPLIED e PHASE_CHANGED; 10:00 + TALK → sem avisos; mesmo tick de novo → DUPLICATE; pacote não aceita mudança depois de montado.
+- `test_imports.py`: passou a importar o `context`.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context e Imports.
+
+---
+
+## 2026-11-13 — Salas e RoomGlance
+
+- Mensagens de erro do `text.py` traduzidas pro inglês. Moderação fora do escopo: o motor é de uso geral. `tick_unit` fica (útil pros outros modos), WAIT segue comentado, STOP fica com 25 por ora. Fim da run depois do dia 10 fica pra Playthrough.
+- `Door` ganhou `rooms: tuple[str, str]`: a porta conhece as duas salas, e a tranca vale dos dois lados.
+- `World` ganhou `rooms`, `doors` e `player_room`; o `apply_tick` repassa os três. `compose_world` agora exige salas, portas e sala inicial (os testes de relógio usam o mundo mínimo `"start"`).
+- `glance.py` (novo): `Exit` (`door_id`, `leads_to`), `RoomGlance` (`room_id`, `exits`, `clock`) e `read_glance(world)`. A tranca não aparece no glance: o jogador só descobre testando.
+- `NarrationContext` ganhou o campo `glance`, montado no `build_context` a partir do World depois do tick.
+- `test_imports.py`: passou a importar o `glance`.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context, Text, Glance e Imports.
