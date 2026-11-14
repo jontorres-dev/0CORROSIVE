@@ -9,6 +9,9 @@ from .verbs import Verb
 from .World import DayPhase, GameClock, World, Tick, TickApplication, TickStatus, compose_world, make_game_clock
 from .warn import PlayerWarning, WhyWarn
 from .persistence import SaveSlot, SaveError, WhySaveFail, new_game, load_game, record_tick
+from .door import Door
+from .deny import ActionDenied, WhyDeny
+
 
 
 # 1. Verb Cost | Block Starts | GameMode
@@ -27,8 +30,10 @@ class GameMode(str, Enum):
     EXPLORE = "explore"                   
     
 # 2. emit_tick | verb + action_id | send Tick ->  World.py
-def emit_tick(verb: Verb, action_id: str) -> Tick:
-    return Tick(amount=VERB_COST[verb], reason=verb.value, source_action_id=action_id)
+def emit_tick(verb: Verb, action_id: str, door_id: str | None = None) -> Tick:
+    if (verb is Verb.MOVE) != (door_id is not None):
+        raise ActionDenied(WhyDeny.TARGET_NOT_FOUND)
+    return Tick(amount=VERB_COST[verb], reason=verb.value, source_action_id=action_id, door_id=door_id)
 
 # 3. read_phase: clock read  -> phase of day
 def read_phase(clock: GameClock) -> DayPhase:
@@ -72,18 +77,14 @@ class TurnResult(BaseModel):
     warnings: tuple[PlayerWarning, ...]
 
 ## 7. run_turn(slot, world, verb, action_id, data_dir) -> TurnResult
-def run_turn(slot: SaveSlot, world: World, verb: Verb, action_id: str, data_dir: Path) -> TurnResult:
-    tick = emit_tick(verb, action_id)
+def run_turn(slot: SaveSlot, world: World, verb: Verb, action_id: str, data_dir: Path, door_id: str | None = None) -> TurnResult:
+    tick = emit_tick(verb, action_id, door_id)
     application = world.apply_tick(tick)
     if application.status is not TickStatus.APPLIED:
         return TurnResult(status=application.status, world=world, warnings=())
     record_tick(slot, tick, application, data_dir)
     warnings = check_phase(world.clock, application.world.clock)
     return TurnResult(status=application.status, world=application.world, warnings=warnings)
-    
-        
-
-
 
 # 8. Tests
 def run_game_master_kernel_tests() -> None:
@@ -159,6 +160,35 @@ def run_game_master_kernel_tests() -> None:
             raise AssertionError("expected slot_not_found")
         except SaveError as error:
             assert error.reason is WhySaveFail.SLOT_NOT_FOUND
+    # MOVE: the exit is the object of the verb
+    with tempfile.TemporaryDirectory() as temp:
+        data_dir = Path(temp)
+        slot = SaveSlot(player_id="jon", playthrough_id="move")
+        doors = (
+            Door(id="cellar_door", rooms=("hall", "cellar"), locked=True, key_id="old key"),
+            Door(id="garden_door", rooms=("garden", "hall")),
+        )
+        house = compose_world(make_game_clock(1, 10, 0), rooms=("hall", "cellar", "garden"), doors=doors, player_room="hall")
+        new_game(slot, house, data_dir)
+        walked = run_turn(slot, house, Verb.MOVE, "m1", data_dir, "garden_door")
+        assert walked.status is TickStatus.APPLIED
+        assert walked.world.player_room == "garden"
+        assert (walked.world.clock.hour, walked.world.clock.minute) == (10, 25)
+        assert load_game(slot, data_dir) == walked.world
+        back = run_turn(slot, walked.world, Verb.MOVE, "m2", data_dir, "garden_door")
+        assert back.world.player_room == "hall"
+        for verb, door_id, reason in (
+            (Verb.MOVE, "cellar_door", WhyDeny.LOCKED),
+            (Verb.MOVE, "back_door", WhyDeny.TARGET_NOT_FOUND),
+            (Verb.MOVE, None, WhyDeny.TARGET_NOT_FOUND),
+            (Verb.TALK, "garden_door", WhyDeny.TARGET_NOT_FOUND),
+        ):
+            try:
+                run_turn(slot, back.world, verb, "m3", data_dir, door_id)
+                raise AssertionError(f"expected {reason.value}")
+            except ActionDenied as error:
+                assert error.reason is reason
+        assert load_game(slot, data_dir) == back.world
 
     print("GameMaster kernel OK")
 

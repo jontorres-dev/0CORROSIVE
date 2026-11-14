@@ -6,6 +6,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .door import Door 
+from .deny import ActionDenied, WhyDeny
+
 
 
 # # Time Clock # # 
@@ -66,6 +68,7 @@ class Tick(BaseModel):
     amount: int = Field(..., ge=1)
     reason: str
     source_action_id: str = Field(..., min_length=1)
+    door_id: str | None = None
 
 
 # TickStatus: read
@@ -92,15 +95,23 @@ class World(BaseModel):
         for applied in self.applied_ticks:
             if applied.source_action_id != tick.source_action_id:
                 continue
-            if applied.amount == tick.amount and applied.reason == tick.reason:
+            if applied.amount == tick.amount and applied.reason == tick.reason and applied.door_id == tick.door_id:
                 return TickApplication(status=TickStatus.DUPLICATE, world=self)
             return TickApplication(status=TickStatus.CONFLICT, world=self)
+        room = self.player_room
+        if tick.door_id is not None:
+            door = next((d for d in self.doors if d.id == tick.door_id and room in d.rooms), None)
+            if door is None:
+                raise ActionDenied(WhyDeny.TARGET_NOT_FOUND)
+            if door.locked:
+                raise ActionDenied(WhyDeny.LOCKED)
+            room = door.rooms[1] if door.rooms[0] == room else door.rooms[0]
         advanced = World(
             clock=advance_clock(self.clock, tick.amount),
             applied_ticks=(*self.applied_ticks, tick),
             rooms=self.rooms,
             doors=self.doors,
-            player_room=self.player_room
+            player_room=room
         )
         return TickApplication(status=TickStatus.APPLIED, world=advanced)
 
