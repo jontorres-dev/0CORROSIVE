@@ -19,21 +19,21 @@ class NarrationContext(BaseModel):
     glance: RoomGlance
 
 ## 2. Function to compose Context
-def build_context(before: GameClock, after: GameClock, application: TickApplication) -> NarrationContext: 
+def build_context(before: GameClock, application: TickApplication) -> NarrationContext:
+    after = application.world.clock
     return NarrationContext(
         clock=after,
         phase=read_phase(after),
         mode=read_mode(),
         status=application.status,
-        warnings=check_phase(before,after),
+        warnings=check_phase(before, after),
         glance=read_glance(application.world)
-    )
-
+        )
 
 def run_context_kernel_tests() -> None:
     start = make_game_clock(1, 11, 30)
     first = compose_world(start, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TOUCH, "c1"))
-    ctx = build_context(start, first.world.clock, first)
+    ctx = build_context(start, first)
     assert ctx.clock == make_game_clock(1, 12, 30)
     assert ctx.phase == DayPhase.AFTERNOON
     assert ctx.mode == GameMode.EXPLORE
@@ -44,10 +44,10 @@ def run_context_kernel_tests() -> None:
 
     calm = make_game_clock(1, 10, 0)
     talked = compose_world(calm, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TALK, "c2"))
-    assert build_context(calm, talked.world.clock, talked).warnings == ()
+    assert build_context(calm, talked).warnings == ()
 
     again = first.world.apply_tick(emit_tick(Verb.TOUCH, "c1"))
-    dup = build_context(first.world.clock, again.world.clock, again)
+    dup = build_context(first.world.clock, again)
     assert dup.status == TickStatus.DUPLICATE
 
     try:

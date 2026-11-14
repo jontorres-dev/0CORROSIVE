@@ -274,4 +274,15 @@ Reorganização flow world
 - Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context, Text, Glance, Persistence e Imports.
 - Próximo: MOVE (trocar de sala) e STOP sem tick.
 
+---
+
+## 2026-11-13 — MOVE
+
+- `Tick` ganhou `door_id: str | None = None`: sem porta é só tempo; com porta é tempo + atravessar. O MOVE viaja dentro do tick, então o log e o replay do `load_game` refazem a troca de sala.
+- `apply_tick`: DUPLICATE/CONFLICT comparam também o `door_id`. Porta inexistente ou de outra sala → `TARGET_NOT_FOUND`; trancada → `LOCKED`; senão `player_room` vira o outro lado da porta. O erro sobe antes de existir mundo novo.
+- `emit_tick(verb, action_id, door_id)`: a saída é o objeto do MOVE. MOVE sem porta ou outro verbo com porta → `TARGET_NOT_FOUND`. `run_turn` repassa o `door_id`.
+- MOVE negado não gera tick nem save. Sem inventário ainda: porta trancada sempre nega.
+- Testes: ida e volta pela mesma porta, 25 min, save guarda a sala nova; LOCKED, porta inexistente, MOVE sem porta e TALK com porta negados sem gravar nada.
+- Kernels OK: Tick, Clock state, Verb, Deny, Door, Warn, GameMaster, Context, Text, Glance, Persistence e Imports.
+- Próximo: STOP sem tick.
 

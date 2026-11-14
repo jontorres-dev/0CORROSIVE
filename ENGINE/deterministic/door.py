@@ -11,6 +11,12 @@ class Door(BaseModel):
     key_id: str | None = None
     rooms: tuple[str, str]
 
+    @model_validator(mode="after")
+    def _no_self_link(self) -> Door:
+        if self.rooms[0] == self.rooms[1]:
+            raise ValueError("door cannot link a room to itself")
+        return self
+
 # try_move  . Door |  ActionDenied 
 def try_move(door: Door, inventory: tuple[str, ...]) -> Door:
     if not door.locked:
@@ -18,6 +24,10 @@ def try_move(door: Door, inventory: tuple[str, ...]) -> Door:
     if door.key_id is not None and door.key_id in inventory:
         return door.model_copy(update={"locked": False})
     raise ActionDenied(WhyDeny.LOCKED)
+# other_side: the room on the other side of the door
+def other_side(door: Door, room: str) -> str:
+    return door.rooms[1] if door.rooms[0] == room else door.rooms[0]
+
 
 # teste
 def run_door_kernel_tests() -> None:
@@ -37,6 +47,17 @@ def run_door_kernel_tests() -> None:
         raise AssertionError("should be denied")
     except ActionDenied as e:
         assert e.reason is WhyDeny.LOCKED
+
+    # 4. door linking a room to itself is refused
+    try:
+        Door(id="loop", rooms=("hall", "hall"))
+        raise AssertionError("self-link should be refused")
+    except ValueError:
+        pass
+
+    # 5. other_side works both ways
+    assert other_side(open_door, "hall") == "garden"
+    assert other_side(open_door, "garden") == "hall"
 
     print("Door kernel tests: OK")
 

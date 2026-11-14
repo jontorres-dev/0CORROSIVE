@@ -1,12 +1,12 @@
 from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 from .World import GameClock, World, compose_world, make_game_clock 
-from .door import Door
+from .door import Door, other_side
 
 ## 1. Exit: class
 class Exit(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+    
     door_id: str
     leads_to: str
 
@@ -24,7 +24,7 @@ def read_glance(world: World) -> RoomGlance:
     exits = tuple(
         Exit(
             door_id=door.id,
-            leads_to=door.rooms[1] if door.rooms[0] == room else door.rooms[0],
+            leads_to=other_side(door, room),
         )
         for door in world.doors
         if room in door.rooms

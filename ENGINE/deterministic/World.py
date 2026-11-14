@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Final
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from .door import Door 
+from .door import Door, try_move, other_side
 from .deny import ActionDenied, WhyDeny
 
 
@@ -86,7 +86,21 @@ class World(BaseModel):
     applied_ticks: tuple[Tick, ...] = ()
     rooms: tuple[str, ...]
     doors: tuple[Door, ...]
-    player_room: str = Field(..., min_length=1)    
+    player_room: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> World:
+        if len(set(self.rooms)) != len(self.rooms):
+            raise ValueError("duplicate room")
+        if self.player_room not in self.rooms:
+            raise ValueError("player_room not in rooms")
+        door_ids = [d.id for d in self.doors]
+        if len(set(door_ids)) != len(door_ids):
+            raise ValueError("duplicate door id")
+        for door in self.doors:
+            if door.rooms[0] not in self.rooms or door.rooms[1] not in self.rooms:
+                raise ValueError(f"door {door.id} leads to unknown room")
+        return self    
 
     def read_clock(self) -> GameClock:
         return self.clock
@@ -103,9 +117,8 @@ class World(BaseModel):
             door = next((d for d in self.doors if d.id == tick.door_id and room in d.rooms), None)
             if door is None:
                 raise ActionDenied(WhyDeny.TARGET_NOT_FOUND)
-            if door.locked:
-                raise ActionDenied(WhyDeny.LOCKED)
-            room = door.rooms[1] if door.rooms[0] == room else door.rooms[0]
+            try_move(door, ())  # no inventory yet: locked always denies
+            room = other_side(door, room)
         advanced = World(
             clock=advance_clock(self.clock, tick.amount),
             applied_ticks=(*self.applied_ticks, tick),
@@ -247,6 +260,22 @@ def run_clock_state_kernel_tests() -> None:
             continue
         raise AssertionError(f"expected ValueError: {(day, hour, minute)}")
 
+def run_world_kernel_tests() -> None:
+    clock = make_game_clock(1, 9, 0)
+    good = (Door(id="d1", rooms=("hall", "garden")),)
+    compose_world(clock, ("hall", "garden"), good, "hall")
+    for rooms, doors, player in (
+        (("hall", "hall"), (), "hall"),
+        (("hall",), (), "cellar"),
+        (("hall", "garden"), good + good, "hall"),
+        (("hall",), good, "hall"),
+    ):
+        try:
+            compose_world(clock, rooms, doors, player)
+            raise AssertionError(f"accepted {rooms} {player}")
+        except ValueError:
+            pass
+
 
 if __name__ == "__main__":
     run_clock_kernel_tests()
@@ -255,3 +284,6 @@ if __name__ == "__main__":
     print("Tick application kernel tests: OK")
     run_clock_state_kernel_tests()
     print("Clock state kernel tests: OK")
+    run_world_kernel_tests()
+    print("World kernel tests: OK")
+
