@@ -1,0 +1,247 @@
+from __future__ import annotations
+from pathlib import Path 
+from typing import Final
+from enum import Enum
+from pydantic import BaseModel, ConfigDict
+import tempfile
+
+from .verbs import Verb
+from .World import DayPhase, GameClock, World, Tick, TickApplication, TickStatus, compose_world, make_game_clock
+from .warn import PlayerWarning, WhyWarn
+from .persistence import SaveSlot, SaveError, WhySaveFail, new_game, load_game, record_tick
+from .door import Door
+from .deny import ActionDenied, WhyDeny
+from .Cast import Cast, notify_cast
+from .Playthrough import EffectDecision, RunEndResult
+
+
+
+# 1. Verb Cost | Block Starts | GameMode
+VERB_COST: Final[dict[Verb, int]] = {
+    Verb.TALK: 25,
+    Verb.MOVE: 25,
+    Verb.STOP: 25,
+    Verb.TOUCH: 60,
+    Verb.ITEM: 45,
+    Verb.SEARCH: 45,
+}
+  ##  1.1.          
+BLOCK_STARTS: Final[tuple[int, ...]] = (0, 6, 12, 18)
+    # GameMode: current game mode. Owner :::: GameMaster.py
+class GameMode(str, Enum):
+    EXPLORE = "explore"                   
+    
+# 2. emit_tick | verb + action_id | send Tick ->  World.py
+def emit_tick(verb: Verb, action_id: str, door_id: str | None = None) -> Tick:
+    if (verb is Verb.MOVE) != (door_id is not None):
+        raise ActionDenied(WhyDeny.TARGET_NOT_FOUND)
+    return Tick(amount=VERB_COST[verb], reason=verb.value, source_action_id=action_id, door_id=door_id)
+
+def is_new_plausible_action(existed_in_initial_world: bool, gm_verdict: bool) -> bool:
+    """True only when the action did not exist in the initial World and the GameMaster confirmed it is plausible."""
+    return (not existed_in_initial_world) and gm_verdict
+
+# 3. read_phase: clock read  -> phase of day
+def read_phase(clock: GameClock) -> DayPhase:
+    if 6 <= clock.hour < 12:
+        return DayPhase.MORNING
+    if 12 <= clock.hour < 18:
+        return DayPhase.AFTERNOON
+    if 18 <= clock.hour < 24:
+        return DayPhase.EVENING
+    return DayPhase.NIGHT
+
+## 3.1 read_mode: returns current GameMode. Single Owner :::: GameMaster.py 
+def read_mode() -> GameMode:
+    return GameMode.EXPLORE
+
+
+## 4.  minutes  next block
+def minutes_to_next_block(clock: GameClock) -> int:
+    now = clock.hour * 60 + clock.minute
+    for start in BLOCK_STARTS:
+        if start * 60 > now:
+            return start * 60 - now
+    return 24 * 60 - now  # next is 00:00 tomorrow
+
+## 5. emit ellipse
+def emit_ellipse(clock: GameClock, action_id: str) -> Tick:
+    return Tick(amount=minutes_to_next_block(clock), reason="ellipse", source_action_id=action_id)
+
+## 5.1 check_phase: clock before + after -> warnings (never raises)
+def check_phase(before: GameClock, after: GameClock) -> tuple[PlayerWarning, ...]:
+    if read_phase(before) != read_phase(after):
+        return (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+    return ()
+
+## 6. TurnResult: 
+class TurnResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    
+    status: TickStatus
+    world: World
+    warnings: tuple[PlayerWarning, ...]
+
+## 7. run_turn(slot, world, verb, action_id, data_dir) -> TurnResult
+def run_turn(slot: SaveSlot, world: World, verb: Verb, action_id: str, data_dir: Path, door_id: str | None = None) -> TurnResult:
+    tick = emit_tick(verb, action_id, door_id)
+    application = world.apply_tick(tick)
+    if application.status is not TickStatus.APPLIED:
+        return TurnResult(status=application.status, world=world, warnings=())
+    record_tick(slot, tick, application, data_dir)
+    warnings = check_phase(world.clock, application.world.clock)
+    return TurnResult(status=application.status, world=application.world, warnings=warnings)
+
+
+def commit_approved_effect(
+    world: World,
+    cast: Cast,
+    decision: EffectDecision,
+) -> tuple[World, Cast]:
+    """Only the GameMaster writes to World and Cast, and only after validation.
+    Idempotent: if the effect is already applied, returns the same state.
+    """
+    if not decision.approved:
+        return world, cast
+    effect_id = decision.proposal.effect_id
+    if effect_id in world.applied_effects:
+        return world, cast
+    new_world = World(
+        clock=world.clock,
+        applied_ticks=world.applied_ticks,
+        applied_effects=(*world.applied_effects, effect_id),
+        run_end=world.run_end,
+        rooms=world.rooms,
+        doors=world.doors,
+        player_room=world.player_room,
+    )
+    new_cast = notify_cast(cast, effect_id)
+    return new_world, new_cast
+
+
+def record_run_end(world: World, result: RunEndResult) -> World:
+    """Minimal registration of an already-evaluated end. Idempotent.
+    Does not interfere with normal effect commits.
+    """
+    if world.run_end is not None:
+        return world
+    if result.effect_id in world.applied_effects:
+        return world
+    return World(
+        clock=world.clock,
+        applied_ticks=world.applied_ticks,
+        applied_effects=(*world.applied_effects, result.effect_id),
+        run_end=result.kind,
+        rooms=world.rooms,
+        doors=world.doors,
+        player_room=world.player_room,
+    )
+
+# 8. Tests
+def run_game_master_kernel_tests() -> None:
+    # every verb has a cost
+    for verb in Verb:
+        assert verb in VERB_COST, f"missing cost: {verb}"
+    # tick carries cost and id
+    tick = emit_tick(Verb.TOUCH, "a1")
+    assert tick.amount == 60 and tick.source_action_id == "a1"
+
+    # phase borders
+    for hour, phase in ((5, DayPhase.NIGHT), (6, DayPhase.MORNING),
+                        (11, DayPhase.MORNING), (12, DayPhase.AFTERNOON),
+                        (17, DayPhase.AFTERNOON), (18, DayPhase.EVENING),
+                        (23, DayPhase.EVENING), (0, DayPhase.NIGHT)):
+        assert read_phase(make_game_clock(1, hour, 0)) == phase, f"phase at {hour}h"
+
+    # end to end: GameMaster -> World
+    world = compose_world(make_game_clock(1, 11, 30), rooms=("start",), doors=(), player_room="start")
+    first = world.apply_tick(emit_tick(Verb.TOUCH, "a2"))
+    assert first.status == TickStatus.APPLIED
+    assert (first.world.clock.hour, first.world.clock.minute) == (12, 30)
+    assert read_phase(first.world.clock) == DayPhase.AFTERNOON
+    again = first.world.apply_tick(emit_tick(Verb.TOUCH, "a2"))
+    assert again.status == TickStatus.DUPLICATE
+    assert again.world.clock == first.world.clock
+    # ellipse: minutes -> next block of day
+    for hour, minute, expected in ((11, 30, 30), (6, 0, 360), (23, 10, 50), (0, 0, 360)):
+        got = minutes_to_next_block(make_game_clock(1, hour, minute))
+        assert got == expected, f"ellipse at {hour}:{minute:02d} -> {got}"
+
+    # ellipse end to end = start of block  
+    jump = compose_world(make_game_clock(1, 11, 30),  rooms=("start",), doors=(), player_room="start").apply_tick(
+        emit_ellipse(make_game_clock(1, 11, 30), "e1"))
+    assert jump.status == TickStatus.APPLIED
+    assert (jump.world.clock.hour, jump.world.clock.minute) == (12, 0)
+    assert read_phase(jump.world.clock) == DayPhase.AFTERNOON
+    # 23:10 -> next day 00:00
+    night = compose_world(make_game_clock(1, 23, 10), rooms=("start",), doors=(), player_room="start").apply_tick(emit_ellipse(make_game_clock(1, 23, 10), "e2"))
+    assert (night.world.clock.day, night.world.clock.hour) == (2, 0)
+    assert len(GameMode) == 1
+    assert read_mode() is GameMode.EXPLORE
+    assert read_mode().value == "explore"
+    # warnings: phase change
+    start = make_game_clock(1, 11, 30)
+    moved = compose_world(start, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TOUCH, "w1")).world.clock
+    assert check_phase(start, moved) == (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+    calm = make_game_clock(1, 10, 0)
+    talked = compose_world(calm, rooms=("start",), doors=(), player_room="start").apply_tick(emit_tick(Verb.TALK, "w2")).world.clock
+    assert check_phase(calm, talked) == ()
+
+    # run_turn: verb -> World -> autosave -> warnings
+    with tempfile.TemporaryDirectory() as temp:
+        data_dir = Path(temp)
+        slot = SaveSlot(player_id="jon", playthrough_id="run")
+        start = compose_world(make_game_clock(1, 11, 30), rooms=("start",), doors=(), player_room="start")
+        new_game(slot, start, data_dir)
+        played = run_turn(slot, start, Verb.TOUCH, "r1", data_dir)
+        assert played.status is TickStatus.APPLIED
+        assert (played.world.clock.hour, played.world.clock.minute) == (12, 30)
+        assert played.warnings == (PlayerWarning(reason=WhyWarn.PHASE_CHANGED),)
+        assert load_game(slot, data_dir) == played.world
+        again = run_turn(slot, played.world, Verb.TOUCH, "r1", data_dir)
+        assert again.status is TickStatus.DUPLICATE
+        assert again.world == played.world and again.warnings == ()
+        clash = run_turn(slot, played.world, Verb.TALK, "r1", data_dir)
+        assert clash.status is TickStatus.CONFLICT
+        assert clash.world == played.world and clash.warnings == ()
+        assert load_game(slot, data_dir) == played.world        
+        ghost = SaveSlot(player_id="ghost", playthrough_id="run")
+        try:
+            run_turn(ghost, start, Verb.TALK, "g1", data_dir)
+            raise AssertionError("expected slot_not_found")
+        except SaveError as error:
+            assert error.reason is WhySaveFail.SLOT_NOT_FOUND
+    # MOVE: the exit is the object of the verb
+    with tempfile.TemporaryDirectory() as temp:
+        data_dir = Path(temp)
+        slot = SaveSlot(player_id="jon", playthrough_id="move")
+        doors = (
+            Door(id="cellar_door", rooms=("hall", "cellar"), locked=True, key_id="old key"),
+            Door(id="garden_door", rooms=("garden", "hall")),
+        )
+        house = compose_world(make_game_clock(1, 10, 0), rooms=("hall", "cellar", "garden"), doors=doors, player_room="hall")
+        new_game(slot, house, data_dir)
+        walked = run_turn(slot, house, Verb.MOVE, "m1", data_dir, "garden_door")
+        assert walked.status is TickStatus.APPLIED
+        assert walked.world.player_room == "garden"
+        assert (walked.world.clock.hour, walked.world.clock.minute) == (10, 25)
+        assert load_game(slot, data_dir) == walked.world
+        back = run_turn(slot, walked.world, Verb.MOVE, "m2", data_dir, "garden_door")
+        assert back.world.player_room == "hall"
+        for verb, door_id, reason in (
+            (Verb.MOVE, "cellar_door", WhyDeny.LOCKED),
+            (Verb.MOVE, "back_door", WhyDeny.TARGET_NOT_FOUND),
+            (Verb.MOVE, None, WhyDeny.TARGET_NOT_FOUND),
+            (Verb.TALK, "garden_door", WhyDeny.TARGET_NOT_FOUND),
+        ):
+            try:
+                run_turn(slot, back.world, verb, "m3", data_dir, door_id)
+                raise AssertionError(f"expected {reason.value}")
+            except ActionDenied as error:
+                assert error.reason is reason
+        assert load_game(slot, data_dir) == back.world
+
+    print("GameMaster kernel OK")
+
+if __name__ == "__main__":
+    run_game_master_kernel_tests()
